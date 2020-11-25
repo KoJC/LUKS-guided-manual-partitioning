@@ -102,7 +102,6 @@ isEFI && read -p "Size for /boot/efi [100M]: " efi
 read -p "Size for LVM [remaining disk space]: " lvm
 read -p "Size for swap in LVM [$totalRAM]: " swap
 read -p "Size for / (root) in LVM [32G]: " root
-read -p "Percent of remaining LVM space to use for /home [100%]: " home
 echo
 while :
 do
@@ -122,14 +121,14 @@ hasKeyfile && dd if=/dev/urandom of="${keyfile}" bs=${keyfileSize} count=1 2> /d
 
 clear
 # fill in the blanks with default values
-parts="efi=100M boot=2G lvm=-1MB swap=${totalRAM} root=32G home=100%"
+parts="efi=100M boot=2G lvm=-1MB swap=${totalRAM} root=100%"
 for part in $parts
 do
 	name=$(cut -f1 -d= <<< $part)
 	[ "$name" == "efi" ] && ! isEFI && continue
 	[ ${!name} ] || eval "${part}"
 done
-grep -q "%" <<< ${home} || home="${home}%"
+grep -q "%" <<< ${root} || root="${root}%"
 
 # create physical partitions
 clear
@@ -202,14 +201,12 @@ pvcreate /dev/mapper/${cryptMapper} > /dev/null 2>&1
 vgcreate vg0 /dev/mapper/${cryptMapper} > /dev/null 2>&1
 echo -n "  Creating ${swap} swap logical volume ... "
 lvcreate -n swap -L ${swap} vg0 > /dev/null 2>&1 && echo -e "${green}done${normalText}" || echo -e "${red}failed${normalText}"
-echo -n "  Creating ${root} root logical volume ... "
-lvcreate -n root -L ${root} vg0 > /dev/null 2>&1 && echo -e "${green}done${normalText}" || echo -e "${red}failed${normalText}"
-homeSpace=$(bc <<< "$(vgdisplay --units b | grep Free | awk '{print $7}') * $(tr -d '%' <<< $home) / 100" | numfmt --to=iec)
-echo -n "  Creating ${homeSpace} home logical volume ... "
-lvcreate -n home -l +${home}free vg0 > /dev/null 2>&1 && echo -e "${green}done${normalText}" || echo -e "${red}failed${normalText}"
+rootSpace=$(bc <<< "$(vgdisplay --units b | grep Free | awk '{print $7}') * $(tr -d '%' <<< $root) / 100" | numfmt --to=iec)
+echo -n "  Creating ${rootSpace} root logical volume ... "
+lvcreate -n root -l +${root}free vg0 > /dev/null 2>&1 && echo -e "${green}done${normalText}" || echo -e "${red}failed${normalText}"
 
 # stage one complete; pause and wait for user to perform installation
-echo -e "${yellow}${boldText}\n\nAt this point, you should KEEP THIS WINDOW OPEN and start the installation \nprocess. When you reach the \"Installation type\" page, select \"Something else\" \nand continue to manual partition setup.\n  ${bootPart} should be used as ext2 for /boot\n$(isEFI && echo "  ${efiPart} should be used as EFI System Partition\n")  /dev/mapper/vg0-home should be used as ext4 for /home\n  /dev/mapper/vg0-root should be used as ext4 for /\n  /dev/mapper/vg0-swap should be used as swap\n  $disk should be selected as the \"Device for boot loader installation\"${normalText}"
+echo -e "${yellow}${boldText}\n\nAt this point, you should KEEP THIS WINDOW OPEN and start the installation \nprocess. When you reach the \"Installation type\" page, select \"Something else\" \nand continue to manual partition setup.\n  ${bootPart} should be used as ext4 for /boot\n$(isEFI && echo "  ${efiPart} should be used as EFI System Partition\n")  /dev/mapper/vg0-root should be used as ext4 for /\n  /dev/mapper/vg0-swap should be used as swap\n  $disk should be selected as the \"Device for boot loader installation\"${normalText}"
 echo
 echo -e "${boldText}After installation, once you've chosen the option to continue testing, press     [Enter] in this window.${normalText}"
 read -s && echo
@@ -227,7 +224,6 @@ doTrim() { [ "${trim,,}" == 'y' ] || return -1; }
 # mount stuff for chroot
 echo -n "Mounting the installed system ... "
 mount /dev/vg0/root /mnt
-mount /dev/vg0/home /mnt/home
 mount ${bootPart} /mnt/boot
 isEFI && mount ${efiPart} /mnt/boot/efi
 mount --bind /dev /mnt/dev
@@ -255,7 +251,7 @@ if doTrim; then
 	sed -i "${lineNum}s/.*/$replaceText/" /etc/lvm/lvm.conf
 	
 	# enable weekly fstrim
-	allParts="/ /boot /home $(isEFI && echo "/boot/efi")"
+	allParts="/ /boot $(isEFI && echo "/boot/efi")"
 	cat << EOF > /etc/cron.weekly/dofstrim
 #! /bin/sh
 for mount in $allParts
@@ -355,7 +351,7 @@ echo -e "<!DOCTYPE html>
 						<li><a href='#action'>Before you do anything else</a></li>
 						<li><a href='#this-setup'>About this installation</a></li>
 						<li><a href='#passphrase-reset'>Changing a known or forgotten LUKS passphrase</a></li>
-						<li><a href='#reinstall'>Reinstall, preserving the home partition</a></li>
+						<li><a href='#reinstall'>Reinstall</a></li>
 					</ul>
 				</div>
 				<hr/>
@@ -376,13 +372,13 @@ echo -e "<!DOCTYPE html>
 					<p>The LUKS.key file only exists if you opted to create a key file during setup. This file can be used to decrypt your system without a passphrase. There are tutorials online that document how this can be done, so I won't get into that here. At any rate, <em>anyone</em> who has a copy of this file will be able to decrypt your entire system! Guard it well!</p>
 					<p>The LUKS.header file is not as sensitive as some of the others since this is just the header information for your LUKS partition and can be easily generated without any special credentials. In the event that the LUKS header becomes corrupted, you can use this file to restore the headers. <em>Note that if you modify the key slots on your LUKS partition by changing or removing passphrases or key files, these headers may become invalid and a new copy of the LUKS partition header should be generated.</em></p>
 					<p>The Change-LUKS-passphrase.sh script exists to simplify changing your current decryption passphrase, or if you created a key file, to help you recover and create a new passphrase in the event that you forget your current passphrase. If you chose to create a key file, then it is embedded in this file which means that <em>anyone</em> who has a copy of this file will be able to decrypt your entire system! Guard it well! If you did not create a key file, this file is not sensitive.</p>
-					<p>The Reinstallation.sh exists to facilitate operating system reinstallation using the existing ecryption and partitions. If you chose to create a key file, then it is embedded in this file which means that <em>anyone</em> who has a copy of this file will be able to decrypt your entire system! Guard it well! If you did not create a key file, this file is not sensitive. This script enables you to perform a clean Ubuntu installation while keeping your /home partition intact and maintaining the existing encryption.</p>
+					<p>The Reinstallation.sh exists to facilitate operating system reinstallation using the existing ecryption and partitions. If you chose to create a key file, then it is embedded in this file which means that <em>anyone</em> who has a copy of this file will be able to decrypt your entire system! Guard it well! If you did not create a key file, this file is not sensitive. This script enables you to perform a clean Ubuntu installation.</p>
 					<p>The LUKS-README.html file (this file you're reading) is not at all sensitive and can be left on this system, but you may want to keep a copy elsewhere in the event that you need to refer to it and are unable to boot into your system to open it.</p>
 					<p></p>
 				</div>
 				<div class='section'><a name='this-setup' />
 					<div class='title'>About this installation</div>
-					<p>The script you used to set up this encrypted installation configured everything mostly the same manner that the automated feature in the Ubuntu installer would have. The physical partitions are created as they would have been with the automated installer except that you were given the option of specifying custom sizes during setup. The encrypted partition itself uses a key size of 512 bytes rather than 256, and the hashing algorithm used is sha512 rather than sha256. The LUKS partition, once unlocked, contains an LVM physical volume that houses the swap, root, and home partitions. This is the same as what you would find with the automated installer except that the automated installer does not create a home partition, and of course, you were given the option of setting custom sizes for each of these partitions.</p>
+					<p>The script you used to set up this encrypted installation configured everything mostly the same manner that the automated feature in the Ubuntu installer would have. The physical partitions are created as they would have been with the automated installer except that you were given the option of specifying custom sizes during setup. The encrypted partition itself uses a key size of 512 bytes rather than 256, and the hashing algorithm used is sha512 rather than sha256. The LUKS partition, once unlocked, contains an LVM physical volume that houses the swap and root partitions. This is the same as what you would find with the automated installer, but you were given the option of setting custom sizes for each of these partitions.</p>
 					<p>LUKS encryption allows for multiple decryption keys. Any saved passphrase or key file can be used to decrypt a LUKS encrypted device or file. If you created a key file, your system has exactly two keys.</p>
 					<ul>
 						<li>Key slot 0: contains the key file created <em>(empty if no key file was created)</em></li>
@@ -398,9 +394,9 @@ echo -e "<!DOCTYPE html>
 					<p>In the event that you have forgotten your LUKS passphrase <em>and</em> you created a key file, fear not! Get a Live Ubuntu USB/DVD and boot from it, selecting the option to try Ubuntu without installing. Once you're at the desktop, simply copy the Change-LUKS-passphrase.sh script over and run it. In either case, you'll be prompted for a new LUKS passphrase. Upon entering a new passphrase, the embedded key file will be used to remove your old passphrase and add the new one. Then reboot and decrypt your system with the new passphrase you created.</p>
 				</div>
 				<div class='section'><a name='reinstall' />
-					<div class='title'>Reinstall, preserving the home partition</div>
-					<p>If you're looking to reinstall your system or just to perform a fresh install, preserving your home partition, it's possible!  Basically, the LUKS partition must be unlocked. Then the system must be installed (without formatting /home). Finally, /etc/crypttab needs to be created and the initramfs updated.</p>
-					<p>The Reinstallation.sh script that was generated and saved to your desktop does just this. Simply boot from your installation medium, copy over and execute the Reinstallation.sh script, and follow the prompts. When you finish, you should be able to boot into your newly installed system with all of your home partition files still intact.</p>
+					<div class='title'>Reinstall</div>
+					<p>If you're looking to reinstall your system or just to perform a fresh install, it's possible!  Basically, the LUKS partition must be unlocked. Then the system must be installed. Finally, /etc/crypttab needs to be created and the initramfs updated.</p>
+					<p>The Reinstallation.sh script that was generated and saved to your desktop does just this. Simply boot from your installation medium, copy over and execute the Reinstallation.sh script, and follow the prompts. When you finish, you should be able to boot into your newly installed system.</p>
 				</div>
 			</div>
 		</div>
@@ -462,14 +458,13 @@ umount /mnt
 echo -e "${green}done${normalText}"
 
 # stage one complete; pause and wait for user to perform installation
-echo -e "\n\nAt this point, you should KEEP THIS WINDOW OPEN and start the installation \nprocess. When you reach the \"Installation type\" page, select \"Something else\" \nand continue to manual partition setup, selecting the option to format \npartitions when available (except /home).\n  ${bootPart} should be used as ext2 for /boot\n\$(isEFI && echo "  ${efiPart} should be used as EFI System Partition\n")  /dev/mapper/vg0-home should be used as ext4 for /home (DO NOT FORMAT)\n  /dev/mapper/vg0-root should be used as ext4 for /\n  /dev/mapper/vg0-swap should be used as swap\n  $disk should be selected as the \"Device for boot loader installation\""
+echo -e "\n\nAt this point, you should KEEP THIS WINDOW OPEN and start the installation \nprocess. When you reach the \"Installation type\" page, select \"Something else\" \nand continue to manual partition setup, selecting the option to format \npartitions when available.\n  ${bootPart} should be used as ext4 for /boot\n\$(isEFI && echo "  ${efiPart} should be used as EFI System Partition\n")  /dev/mapper/vg0-root should be used as ext4 for /\n  /dev/mapper/vg0-swap should be used as swap\n  $disk should be selected as the \"Device for boot loader installation\""
 echo
 read -sp "After installation, once you've chosen the option to continue testing, press    [Enter] in this window." && echo
 
 # mount stuff for chroot
 echo -n "Mounting the installed system ... "
 mount /dev/vg0/root /mnt
-mount /dev/vg0/home /mnt/home
 mount ${bootPart} /mnt/boot
 isEFI && mount ${efiPart} /mnt/boot/efi
 mount --bind /dev /mnt/dev
