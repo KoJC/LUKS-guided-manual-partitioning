@@ -133,7 +133,7 @@ grep -q "%" <<< ${root} || root="${root}%"
 # create physical partitions
 clear
 offset="1M"	#offset for first partition
-physicalParts="boot:ext2 efi:fat16 lvm"
+physicalParts="boot:ext4 efi:fat32 lvm"
 index=$(bytes $offset)
 for part in ${physicalParts}
 do
