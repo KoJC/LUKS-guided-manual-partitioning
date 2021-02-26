@@ -86,22 +86,13 @@ hasKeyfile() {
 	[ "${keyfileSize,,}" == "none" ] && return 1 || return 0
 }
 
-# wipe the disk partition info and create new gpt partition table
-dd if=/dev/zero of=$disk bs=1M count=10 2> /dev/null
-if isEFI; then
-	tableType='gpt'
-else
-	tableType='msdos'
-fi
-parted $disk mktable $tableType > /dev/null 2>&1
-
 # get information about desired sizes
 totalRAM=$(cat /proc/meminfo | head -n1 | grep -oP "\d+.*" | tr -d ' B' | tr 'a-z' 'A-Z' | numfmt --from iec --to iec --format "%.f")
 read -p "Size for /boot [2G]: " boot
 isEFI && read -p "Size for /boot/efi [100M]: " efi
 read -p "Size for LVM [remaining disk space]: " lvm
 read -p "Size for swap in LVM [$totalRAM]: " swap
-read -p "Size for / (root) in LVM [32G]: " root
+read -p "Size for / (root) in LVM [100%]: " root
 echo
 while :
 do
@@ -130,9 +121,30 @@ do
 done
 grep -q "%" <<< ${root} || root="${root}%"
 
+# preinstalled windows 10 on my dell xps 15
+
+#ubuntu-mate@ubuntu-mate:~$ sudo parted /dev/nvme0n1 unit b print free
+#Model: PM981a NVMe SAMSUNG 2048GB (nvme)
+#Disk /dev/nvme0n1: 2048408248320B
+#Sector size (logical/physical): 512B/512B
+#Partition Table: gpt
+#Disk Flags: 
+#
+#Warning: failed to translate partition name
+#Number  Start          End             Size            File system  Name                          Flags
+#        17408B         1048575B        1031168B        Free Space
+# 1      1048576B       200278015B      199229440B      fat32        EFI system partition          boot, esp
+# 2      200278016B     334495743B      134217728B                   Microsoft reserved partition  msftres
+# 3      334495744B     840038350847B   839703855104B   ntfs         Basic data partition          msftdata
+# 4      840038350848B  841076441087B   1038090240B     ntfs                                       hidden, diag
+# 5      841076441088B  858366410751B   17289969664B    ntfs                                       hidden, diag
+# 6      858366410752B  859831271423B   1464860672B     ntfs                                       hidden, diag
+#        859831271424B  2048408231423B  1188576960000B  Free Space
+
 # create physical partitions
 clear
-offset="1M"	#offset for first partition
+# specific offset for my dell xps 15 dual boot setup
+offset="859831271424"	#offset for first partition
 physicalParts="boot:ext4 efi:fat32 lvm"
 index=$(bytes $offset)
 for part in ${physicalParts}
@@ -174,12 +186,14 @@ getDiskPartitionByNumber() {
 	echo "$part"
 }
 
-bootPart=$(getDiskPartitionByNumber 1)
-isEFI && efiPart=$(getDiskPartitionByNumber 2)
+
+# 7, 8 & 9 are specific to my dell xps 15
+bootPart=$(getDiskPartitionByNumber 7)
+isEFI && efiPart=$(getDiskPartitionByNumber 8)
 
 # setup LUKS encryption
 echo "Setting up encryption:"
-isEFI && luksPart=$(getDiskPartitionByNumber 3) || luksPart=$(getDiskPartitionByNumber 2)
+isEFI && luksPart=$(getDiskPartitionByNumber 9) || luksPart=$(getDiskPartitionByNumber 8)
 cryptMapper="${luksPart/\/dev\/}_crypt"
 echo -en "  Encrypting ${luksPart} with your passphrase ... "
 echo -n "${luksPass}" | cryptsetup luksFormat -c aes-xts-plain64 -h sha512 -s 512 --iter-time 5000 --use-random -S 1 -d - ${luksPart}
