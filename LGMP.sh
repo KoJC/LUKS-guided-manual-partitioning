@@ -121,7 +121,7 @@ do
 done
 grep -q "%" <<< ${root} || root="${root}%"
 
-# preinstalled windows 10 on my dell xps 15
+# preinstalled windows 10 on my ThinkPad 13
 
 #ubuntu-mate@ubuntu-mate:~$ sudo parted /dev/nvme0n1 unit b print free
 #Model: PM981a NVMe SAMSUNG 2048GB (nvme)
@@ -136,15 +136,12 @@ grep -q "%" <<< ${root} || root="${root}%"
 # 1      1048576B       200278015B      199229440B      fat32        EFI system partition          boot, esp
 # 2      200278016B     334495743B      134217728B                   Microsoft reserved partition  msftres
 # 3      334495744B     840038350847B   839703855104B   ntfs         Basic data partition          msftdata
-# 4      840038350848B  841076441087B   1038090240B     ntfs                                       hidden, diag
-# 5      841076441088B  858366410751B   17289969664B    ntfs                                       hidden, diag
-# 6      858366410752B  859831271423B   1464860672B     ntfs                                       hidden, diag
-#        859831271424B  2048408231423B  1188576960000B  Free Space
+#        131073048576B  2048408231423B  1188576960000B  Free Space
 
 # create physical partitions
 clear
-# specific offset for my dell xps 15 dual boot setup
-offset="859831271424"	#offset for first partition
+# specific offset for my ThinkPad 13 dual boot setup
+offset="131073048576"	#offset for first partition
 physicalParts="boot:ext4 efi:fat32 lvm"
 index=$(bytes $offset)
 for part in ${physicalParts}
@@ -187,13 +184,13 @@ getDiskPartitionByNumber() {
 }
 
 
-# 7, 8 & 9 are specific to my dell xps 15
-bootPart=$(getDiskPartitionByNumber 7)
-isEFI && efiPart=$(getDiskPartitionByNumber 8)
+# 4, 5 & 6 are specific to my ThinkPad 13
+bootPart=$(getDiskPartitionByNumber 4)
+isEFI && efiPart=$(getDiskPartitionByNumber 5)
 
 # setup LUKS encryption
 echo "Setting up encryption:"
-isEFI && luksPart=$(getDiskPartitionByNumber 9) || luksPart=$(getDiskPartitionByNumber 8)
+isEFI && luksPart=$(getDiskPartitionByNumber 6) || luksPart=$(getDiskPartitionByNumber 5)
 cryptMapper="${luksPart/\/dev\/}_crypt"
 echo -en "  Encrypting ${luksPart} with your passphrase ... "
 echo -n "${luksPass}" | cryptsetup luksFormat -c aes-xts-plain64 -h sha512 -s 512 --iter-time 5000 --use-random -S 1 -d - ${luksPart}
